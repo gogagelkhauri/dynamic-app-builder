@@ -1,0 +1,646 @@
+@page "/editor"
+@using System.Text
+@using MudBlazor
+@using System.Text.Json
+@using System.Text.Json.Serialization
+@using Shared
+@inject IJSRuntime JsRuntime
+@inject HttpClient Http
+
+<div Class="mt-3">
+    <MudButton Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.RunCircle" Color="Color.Info"  Size="Size.Small">Run</MudButton>
+    <MudButton Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save" Color="Color.Success"  Size="Size.Small"  OnClick="SaveAsync">Save</MudButton>
+</div>
+
+<MudItem Class="mt-2">
+    <MudIcon Icon="@Icons.Material.Filled.Splitscreen"/>
+</MudItem>
+
+<MudGrid Class="mt-1">
+    <MudItem xs="3">
+        <MudPaper Class="pa-4" >
+            <MudText Typo="Typo.h6">Available Controls</MudText>
+            <MudList T="string">
+                <MudListItem @ondragstart="@((e) => StartDrag(e, "Text Input"))" Draggable="true"
+                             @attributes="GetDragAttributes()">
+                    <MudIcon Icon="@Icons.Material.Outlined.TextFields" Class="mr-2" /> Text Input
+                </MudListItem>
+                <MudListItem @ondragstart="@((e) => StartDrag(e, "Number Input"))" Draggable="true"
+                             @attributes="GetDragAttributes()">
+                    <MudIcon Icon="@Icons.Material.Outlined.Numbers" Class="mr-2" /> Number Input
+                </MudListItem>
+                <MudListItem @ondragstart="@((e) => StartDrag(e, "Dropdown"))" Draggable="true"
+                             @attributes="GetDragAttributes()">
+                    <MudIcon Icon="@Icons.Material.Outlined.ArrowDropDown" Class="mr-2" /> Dropdown
+                </MudListItem>
+                <MudListItem @ondragstart="@((e) => StartDrag(e, "Checkbox"))" Draggable="true"
+                             @attributes="GetDragAttributes()">
+                    <MudIcon Icon="@Icons.Material.Outlined.CheckBoxOutlineBlank" Class="mr-2" /> Checkbox
+                </MudListItem>
+                <MudListItem @ondragstart="@((e) => StartDrag(e, "Button"))" Draggable="true"
+                             @attributes="GetDragAttributes()">
+                    <MudIcon Icon="@Icons.Material.Outlined.TouchApp" Class="mr-2" /> Button
+                </MudListItem>
+                <MudListItem @ondragstart="@((e) => StartDrag(e, "Date Picker"))" Draggable="true"
+                             @attributes="GetDragAttributes()">
+                    <MudIcon Icon="@Icons.Material.Outlined.CalendarToday" Class="mr-2" /> Date Picker
+                </MudListItem>
+            </MudList>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="6">
+        <MudPaper Class="pa-4">
+            <div class="canvas" @ondrop="HandleDrop" @ondragover="HandleDragOverJs" id="canvas">
+                @foreach (var control in controls)
+                {
+                    <div style="@GetControlStyle(control)"
+                         @onmousedown="@((e) => StartMove(e, control))"
+                         @onmouseup="EndMove"
+                         @onmousemove="MoveControl"
+                         Draggable="@(_movingControl == control)"
+                         id="@GetControlId(control)">
+                        @switch (control.Type)
+                        {
+                            case "Text Input":
+                                <MudTextField Label="@control.Properties.GetValueOrDefault("Label")?.ToString()"
+                                              Placeholder="@control.Properties.GetValueOrDefault("Placeholder")?.ToString()"
+                                              Value="@GetTextInputValue(control)"
+                                              ValueChanged="@((string newValue) => UpdateTextInputValue(control, newValue))"
+                                               />
+                                break;
+                            case "Number Input":
+                                <MudNumericField T="decimal?"
+                                                 Label="@control.Properties.GetValueOrDefault("Label")?.ToString()"
+                                                 Placeholder="@control.Properties.GetValueOrDefault("Placeholder")?.ToString()"
+                                                 Value="@GetNumberInputValue(control)"
+                                                 ValueChanged="@((decimal? newValue) => 
+                                                               {
+                                                                   if (newValue.HasValue)
+                                                                   {
+                                                                       UpdateNumberInputValue(control, newValue.Value);
+                                                                   }
+                                                               })" />
+                                break;
+                            case "Dropdown":
+                                var dropdownOptions = GetDropdownOptions(control);
+                                string selectedValue = GetDropdownValue(control);
+                                <MudSelect Label="@control.Properties.GetValueOrDefault("Label")?.ToString()"
+                                           @bind-Value="selectedValue"
+                                           Items="dropdownOptions"
+                                           T="string">
+                                    @foreach(var option in dropdownOptions)
+                                    {
+                                        <MudSelectItem Value="option">@option</MudSelectItem>
+                                    }
+                                </MudSelect>
+                                break;
+                            case "Checkbox":
+                                bool? checkboxValue = GetCheckboxValue(control);
+                                <MudCheckBox T="bool?" Label="@control.Properties.GetValueOrDefault("Label")?.ToString()"
+                                             @bind-Checked="checkboxValue"
+                                              />
+                                break;
+                            case "Button":
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                           OnClick="@(() => HandleButtonClick(control))">
+                                    @control.Properties.GetValueOrDefault("Text")?.ToString()
+                                </MudButton>
+                                break;
+                            case "Date Picker":
+                                 DateTime? datePickerValue = GetDatePickerValue(control);
+                                <MudDatePicker Label="@control.Properties.GetValueOrDefault("Label")?.ToString()"
+                                               @bind-Date="datePickerValue"
+                                                />
+                                break;
+                        }
+                    </div>
+                }
+                @if (controls.Count == 0)
+                {
+                    <MudText Align="Align.Center" Color="Color.Secondary">Drag and drop controls here to design your application.</MudText>
+                }
+            </div>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="3">
+        <MudPaper Class="pa-4">
+            <MudText Typo="Typo.h6">Properties</MudText>
+            @if (selectedControl != null)
+            {
+                @switch (selectedControl.Type)
+                {
+                    case "Text Input":
+                        <MudTextField T="string" Label="Label" Value="@selectedControl.Properties["Label"]?.ToString()"
+                                      ValueChanged="@((string newValue) => UpdateControlProperties(selectedControl, "Label", newValue))" />
+                        <MudTextField T="string" Label="Placeholder" Value="@selectedControl.Properties["Placeholder"]?.ToString()"
+                                      ValueChanged="@((string newValue) => UpdateControlProperties(selectedControl, "Placeholder", newValue))" />
+                        break;
+                    case "Number Input":
+                        <MudTextField T="string" Label="Label" Value="@selectedControl.Properties["Label"]?.ToString()"
+                                      ValueChanged="@((string newValue) => UpdateControlProperties(selectedControl, "Label", newValue))" />
+                        <MudTextField T="string" Label="Placeholder"  Value="@selectedControl.Properties["Placeholder"]?.ToString()"
+                                      ValueChanged="@((string newValue) => UpdateControlProperties(selectedControl, "Placeholder", newValue))" />
+                        break;
+                    case "Dropdown":
+                        <MudTextField T="string" Label="Label" Value="@selectedControl.Properties["Label"]?.ToString()"
+                                      ValueChanged="@((string newValue) => UpdateControlProperties(selectedControl, "Label", newValue))" />
+                        <MudTextField T="string" Label="Options" Value="@string.Join(",", GetDropdownOptions(selectedControl))"
+                                      ValueChanged="@((string newValue) => UpdateDropdownOptions(selectedControl, newValue))" />
+                        break;
+                    case "Checkbox":
+                        <MudTextField T="string" Label="Label" Value="@selectedControl.Properties["Label"]?.ToString()"
+                                      ValueChanged="@((string newValue) => UpdateControlProperties(selectedControl, "Label", newValue))" />
+                        break;
+                    case "Button":
+                        <MudTextField T="string" Label="Text" Value="@selectedControl.Properties["Text"]?.ToString()"
+                                      ValueChanged="@((string newValue) => UpdateControlProperties(selectedControl, "Text", newValue))" />
+                        break;
+                    case "Date Picker":
+                        <MudTextField T="DateTime?" Label="Label" Value="@GetDatePickerValue(selectedControl)"
+                                      ValueChanged="@((DateTime? newValue) => UpdateControlProperties(selectedControl, "Value", newValue))" />
+                        break;
+                    case "Grid":
+                        <MudText>Grid Properties</MudText>
+                        break;
+                    default:
+                        <MudText>Select a control to view its properties.</MudText>
+                        break;
+                }
+            }
+            else
+            {
+                <MudText>Select a control to view its properties.</MudText>
+            }
+        </MudPaper>
+      
+    </MudItem>
+   
+</MudGrid>
+
+<style>
+    .canvas {
+        width: 100%;
+        min-height: 400px;
+        border: 1px dashed #ccc;
+        position: relative;
+        padding: 20px;
+        overflow: auto;
+    }
+
+    .canvas > div {
+        position: absolute;
+        border: 1px solid #eee;
+        padding: 15px;
+        background-color: white;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        cursor: pointer;
+    }
+
+    .canvas > div:active {
+        cursor: grabbing;
+    }
+</style>
+
+@code {
+    private List<ControlDefinition> controls = new List<ControlDefinition>();
+    private string draggedControlType;
+    private double dropX;
+    private double dropY;
+    private ControlDefinition? _movingControl;
+    private double _dragOffsetX;
+    private double _dragOffsetY;
+    private ControlDefinition? selectedControl;
+
+    [Inject]
+    private IJSRuntime JSRuntime { get; set; }
+
+    private async void StartDrag(MouseEventArgs e, string controlType)
+    {
+        draggedControlType = controlType;
+        try
+        {
+            var jsObjectReference = await JSRuntime.InvokeAsync<IJSObjectReference>("getDomElementById", e);
+            var canvasRect = await JSRuntime.InvokeAsync<JsonElement>("getBoundingClientRect", jsObjectReference);
+
+            _dragOffsetX = e.ClientX - canvasRect.GetProperty("left").GetDouble();
+            _dragOffsetY = e.ClientY - canvasRect.GetProperty("top").GetDouble();
+
+            _movingControl = new ControlDefinition
+            {
+                Type = draggedControlType,
+                Properties = GetDefaultProperties(draggedControlType),
+                PositionX = e.ClientX - _dragOffsetX,
+                PositionY = e.ClientY - _dragOffsetY,
+            };
+
+            controls.Add(_movingControl);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in StartDrag: {ex.Message}");
+        }
+
+    }
+
+    private async Task HandleDragOverJs(DragEventArgs e)
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("preventDefaultDrag", "canvas");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in HandleDragOverJs: {ex.Message}");
+        }
+    }
+
+    private void StartMove(MouseEventArgs e, ControlDefinition control)
+    {
+        _movingControl = control;
+        _dragOffsetX = e.ClientX - control.PositionX;
+        _dragOffsetY = e.ClientY - control.PositionY;
+        selectedControl = control;
+        StateHasChanged();
+    }
+
+    private void EndMove(MouseEventArgs e)
+    {
+        _movingControl = null;
+    }
+
+    private void MoveControl(MouseEventArgs e)
+    {
+        if (_movingControl != null)
+        {
+            _movingControl.PositionX = e.ClientX - _dragOffsetX;
+            _movingControl.PositionY = e.ClientY - _dragOffsetY;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HandleDrop(DragEventArgs e)
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(draggedControlType) || _movingControl != null)
+            {
+                var canvasRect = await JSRuntime.InvokeAsync<JsonElement>("getBoundingClientRect", "canvas");
+                double left = canvasRect.GetProperty("left").GetDouble();
+                double top = canvasRect.GetProperty("top").GetDouble();
+                dropX = e.ClientX - left;
+                dropY = e.ClientY - top;
+
+                bool isOverlap = await IsOverlap(dropX, dropY, draggedControlType);
+                if (!isOverlap)
+                {
+                    if (_movingControl != null)
+                    {
+                        _movingControl.PositionX = dropX;
+                        _movingControl.PositionY = dropY;
+                        _movingControl = null;
+                    }
+                    else
+                    {
+                        var newControl = new ControlDefinition
+                        {
+                            Type = draggedControlType,
+                            Properties = GetDefaultProperties(draggedControlType),
+                            PositionX = dropX,
+                            PositionY = dropY,
+                        };
+                        controls.Add(newControl);
+                        draggedControlType = null;
+                    }
+                    StateHasChanged();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in HandleDrop: {ex.Message}");
+        }
+    }
+    
+    private Dictionary<string, object> GetDefaultProperties(string controlType)
+    {
+        return controlType switch
+        {
+            "Text Input" => new Dictionary<string, object> { { "Label", "Text Input" }, { "Placeholder", "" }, { "Value", "" } },
+            "Number Input" => new Dictionary<string, object> { { "Label", "Number" }, { "Placeholder", "Enter a number" }, { "Value", 0m } },
+            "Dropdown" => new Dictionary<string, object> { { "Label", "Dropdown" }, { "Options", "Option 1,Option 2,Option 3" }, { "Value", null } },
+            "Checkbox" => new Dictionary<string, object> { { "Label", "Checkbox" }, { "Value", false } },
+            "Button" => new Dictionary<string, object> { { "Text", "Click Me" } },
+            "Date Picker" => new Dictionary<string, object> { { "Label", "Select Date" }, { "Value", null } },
+            _ => new Dictionary<string, object>()
+        };
+    }
+
+    private string GetControlStyle(ControlDefinition control)
+    {
+        var style = $"left: {control.PositionX}px; top: {control.PositionY}px; position: absolute; border: 1px solid #eee; padding: 15px; background-color: white; box-shadow: 0 1px 3px rgba(0,0,0,0.05); cursor: pointer;";
+        if (_movingControl == control)
+        {
+            style += "z-index: 1000; opacity: 0.5; cursor: grabbing;";
+        }
+        return style;
+    }
+
+    private bool GetCheckboxValue(ControlDefinition control)
+    {
+        if (control.Properties.TryGetValue("Value", out object value))
+        {
+            if (value is bool boolValue)
+            {
+                return boolValue;
+            }
+            else if (value is string stringValue)
+            {
+                if (stringValue.ToLower() == "true")
+                    return true;
+                else if (stringValue.ToLower() == "false")
+                    return false;
+                else
+                    return false;
+            }
+        }
+        return false;
+    }
+
+    private void HandleButtonClick(ControlDefinition buttonControl)
+    {
+        Console.WriteLine($"Button '{buttonControl.Properties["Text"]}' clicked!");
+    }
+
+    
+    private IDictionary<string, object> GetDragAttributes()
+    {
+        return new Dictionary<string, object>
+        {
+            { "draggable", "true" },
+        };
+    }
+
+    private string GetControlId(ControlDefinition control)
+    {
+        return control.Id;
+    }
+
+    private async Task<bool> IsOverlap(double x, double y, string? draggedControlType)
+    {
+        try
+        {
+            var canvasRect = await JSRuntime.InvokeAsync<JsonElement>("getBoundingClientRect", "canvas");
+            double canvasLeft = canvasRect.GetProperty("left").GetDouble();
+            double canvasTop = canvasRect.GetProperty("top").GetDouble();
+
+            double controlWidth = 0;
+            double controlHeight = 0;
+
+            switch (draggedControlType)
+            {
+                case "Text Input":
+                    controlWidth = 200;
+                    controlHeight = 38;
+                    break;
+                case "Number Input":
+                    controlWidth = 200;
+                    controlHeight = 38;
+                    break;
+                case "Dropdown":
+                    controlWidth = 200;
+                    controlHeight = 38;
+                    break;
+                case "Checkbox":
+                    controlWidth = 150;
+                    controlHeight = 24;
+                    break;
+                case "Button":
+                    controlWidth = 100;
+                    controlHeight = 36;
+                    break;
+                 case "Date Picker":
+                    controlWidth = 200;
+                    controlHeight = 38;
+                    break;
+                case "Grid":
+                    controlWidth = 400;
+                    controlHeight = 200;
+                    break;
+                default:
+                    controlWidth = 100;
+                    controlHeight = 30;
+                    break;
+            }
+
+
+            foreach (var existingControl in controls)
+            {
+                double existingControlLeft = existingControl.PositionX;
+                double existingControlTop = existingControl.PositionY;
+
+                double existingControlWidth = 0;
+                double existingControlHeight = 0;
+                switch (existingControl.Type)
+                {
+                    case "Text Input":
+                        existingControlWidth = 200;
+                        existingControlHeight = 38;
+                        break;
+                    case "Number Input":
+                        existingControlWidth = 200;
+                        existingControlHeight = 38;
+                        break;
+                    case "Dropdown":
+                        existingControlWidth = 200;
+                        existingControlHeight = 38;
+                        break;
+                    case "Checkbox":
+                        existingControlWidth = 150;
+                        existingControlHeight = 24;
+                        break;
+                    case "Button":
+                        existingControlWidth = 100;
+                        existingControlHeight = 36;
+                        break;
+                    case "Date Picker":
+                        existingControlWidth = 200;
+                        existingControlHeight = 38;
+                        break;
+                    case "Grid":
+                        existingControlWidth = 400;
+                        existingControlHeight = 200;
+                        break;
+                    default:
+                        existingControlWidth = 100;
+                        existingControlHeight = 30;
+                        break;
+                }
+                
+                if (x < existingControlLeft + existingControlWidth &&
+                    x + controlWidth > existingControlLeft &&
+                    y < existingControlTop + existingControlHeight &&
+                    y + controlHeight > existingControlTop)
+                {
+                    return true; 
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error checking for overlap: {ex.Message}");
+        }
+        return false;
+    }
+
+     private DateTime? GetDatePickerValue(ControlDefinition control)
+    {
+        if (control.Properties.TryGetValue("Value", out object value))
+        {
+            if (value is DateTime dateTimeValue)
+            {
+                return dateTimeValue;
+            }
+             else if (value is string stringValue)
+            {
+                if (DateTime.TryParse(stringValue, out DateTime parsedDateTime))
+                    return parsedDateTime;
+            }
+        }
+        return null;
+    }
+
+    private List<string> GetDropdownOptions(ControlDefinition control)
+    {
+        if (control.Properties.TryGetValue("Options", out object value))
+        {
+            if (value is string stringValue)
+            {
+                return stringValue.Split(',').ToList();
+            }
+        }
+        return new List<string>();
+    }
+
+     private string? GetDropdownValue(ControlDefinition control)
+    {
+        if (control.Properties.TryGetValue("Value", out object value))
+        {
+            return value?.ToString();
+        }
+        return null;
+    }
+
+    private void UpdateControlProperties(ControlDefinition control, string propertyName, object newValue)
+    {
+        if (control.Properties.ContainsKey(propertyName))
+        {
+            control.Properties[propertyName] = newValue;
+        }
+        else
+        {
+            control.Properties.Add(propertyName, newValue);
+        }
+        selectedControl = control;
+        StateHasChanged();
+    }
+
+    private string GetTextInputValue(ControlDefinition control)
+    {
+         if (control.Properties.TryGetValue("Value", out object value))
+        {
+            return value?.ToString() ?? "";
+        }
+        return "";
+    }
+
+    private void UpdateTextInputValue(ControlDefinition control, string newValue)
+    {
+        control.Properties["Value"] = newValue;
+        StateHasChanged();
+    }
+
+    private decimal GetNumberInputValue(ControlDefinition control)
+    {
+        if (control.Properties.TryGetValue("Value", out object value))
+        {
+            if (value is decimal decimalValue)
+            {
+                return decimalValue;
+            }
+            else if (value is int intValue)
+            {
+                return (decimal)intValue;
+            }
+            else if (value is double doubleValue)
+            {
+                return (decimal)doubleValue;
+            }
+             else if (value is string strValue)
+            {
+                if (decimal.TryParse(strValue, out decimal parsedValue))
+                    return parsedValue;
+            }
+        }
+        return 0m;
+    }
+
+    private void UpdateNumberInputValue(ControlDefinition control, decimal newValue)
+    {
+        control.Properties["Value"] = newValue;
+        StateHasChanged();
+    }
+
+    private void UpdateDropdownOptions(ControlDefinition control, string newValue)
+    {
+        control.Properties["Options"] = newValue;
+        StateHasChanged();
+    }
+    
+    private async Task SaveAsync()
+    {
+        if (controls.Count > 0)
+        {
+            try
+            {
+                var response = await Http.PostAsJsonAsync("api/screen/save-data", controls);
+                Console.WriteLine(response.IsSuccessStatusCode ? "Saved successfully!" : $"Error: {response.StatusCode}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Exception occurred: {ex.Message}");
+            }
+        }
+    }
+}
+
+<script>
+    function getBoundingClientRect(el) {
+        const element = (el instanceof Element) ? el : document.getElementById(el);
+        if (!element) return null;
+        const rect = element.getBoundingClientRect();
+        return {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+            width: rect.width,
+            height: rect.height,
+            x: rect.x,
+            y: rect.y
+        };
+    }
+
+    function preventDefaultDrag(elementId) {
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.addEventListener('dragover', function(e) {
+                e.preventDefault();
+            }, false);
+        }
+    }
+
+    function getDomElementById(element) {
+        return element;
+    }
+</script>
